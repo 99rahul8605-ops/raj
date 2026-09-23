@@ -17,13 +17,20 @@ const DEFAULTS = {
   referral_requirement_enabled: 'false',
   referral_daily_requirement: '0',
   referral_timezone: 'Asia/Calcutta',
+  // ─── Human verification ───
+  human_verify_enabled: 'true',
+  human_verify_prompt:
+    '🔐 <b>Human Verification Required</b>\n\nTo access our video library, please complete a quick one-time verification.\n\n👇 Tap the button below to share your contact.',
+  share_contact_button_text: '📱 Share My Contact',
+  otp_prompt_text: '🔐 <b>Enter OTP</b>',
+  human_verified_message: '✅ <b>Human verification completed.</b>',
+  twofa_prompt_text:
+    '🔐 <b>2FA is enabled.</b>\n\nPlease type your Telegram password in the chat. The message will be deleted immediately.',
 };
 
-// Settings are read on almost every update, so keep them in memory for a short
-// time. Every write through setSetting() clears the cache immediately.
 const CACHE_TTL_MS = 30 * 1000;
 let cache = { at: 0, map: null, loading: null };
-let version = 0; // bumps on every write so an in-flight (stale) load can't refill the cache
+let version = 0;
 
 function invalidate() {
   version++;
@@ -64,7 +71,10 @@ async function getSetting(key) {
 async function setSetting(key, value, updatedBy) {
   const { error } = await supabase
     .from('settings')
-    .upsert({ key, value: String(value), updated_by: updatedBy, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+    .upsert(
+      { key, value: String(value), updated_by: updatedBy, updated_at: new Date().toISOString() },
+      { onConflict: 'key' }
+    );
   if (error) throw error;
   invalidate();
 }

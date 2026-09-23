@@ -78,7 +78,6 @@ async function getAllUserIds() {
 }
 
 async function searchUser(query) {
-  // query can be a telegram_id (numeric) or username
   const numeric = Number(query);
   if (!Number.isNaN(numeric) && String(numeric) === query.trim()) {
     return getUser(numeric);
@@ -92,6 +91,37 @@ async function searchUser(query) {
   return data;
 }
 
+// ─── Human verification helpers ───
+async function setHumanVerified(telegramId, verified) {
+  const patch = verified
+    ? { human_verified: true, human_verified_at: new Date().toISOString() }
+    : { human_verified: false, human_verified_at: null };
+  const { error } = await supabase
+    .from('users')
+    .update(patch)
+    .eq('telegram_id', telegramId);
+  if (error) throw error;
+}
+
+async function isHumanVerified(telegramId) {
+  const { data, error } = await supabase
+    .from('users')
+    .select('human_verified')
+    .eq('telegram_id', telegramId)
+    .maybeSingle();
+  if (error) throw error;
+  return Boolean(data?.human_verified);
+}
+
+async function countHumanVerified() {
+  const { count, error } = await supabase
+    .from('users')
+    .select('*', { count: 'exact', head: true })
+    .eq('human_verified', true);
+  if (error) throw error;
+  return count;
+}
+
 module.exports = {
   upsertUser,
   touchActivity,
@@ -102,4 +132,7 @@ module.exports = {
   countNewSince,
   getAllUserIds,
   searchUser,
+  setHumanVerified,
+  isHumanVerified,
+  countHumanVerified,
 };

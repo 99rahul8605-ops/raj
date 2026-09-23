@@ -18,7 +18,6 @@ async function handleStart(ctx) {
   const user = ctx.from;
   const startPayload = typeof ctx.match === 'string' ? ctx.match.trim() : '';
 
-  // Read everything we need in parallel (settings + channels are cached).
   const [existingUser, admin, settings, channels] = await Promise.all([
     usersRepo.getUser(uid),
     isAdmin(uid),
@@ -26,21 +25,17 @@ async function handleStart(ctx) {
     forceJoinRepo.listEnabledChannels(),
   ]);
 
-  // Check if blocked
   if (existingUser?.is_blocked) {
     return ctx.reply('⛔️ You have been blocked from using this bot.');
   }
 
-  // Make sure the user row exists (also needed for join requests / referrals)
   await usersRepo.upsertUser(user);
 
-  // Build welcome message — no channel names or links shown here
   let text = settings.welcome_text || '👋 Welcome!';
   if (settings.instructions_text) text += `\n\n${settings.instructions_text}`;
 
   const kb = await welcomeKeyboard(settings, channels);
 
-  // Send demo image if configured, otherwise text-only
   if (settings.demo_image && settings.demo_image.trim()) {
     try {
       await ctx.replyWithPhoto(settings.demo_image, { caption: text, parse_mode: 'HTML', reply_markup: kb });
@@ -52,21 +47,18 @@ async function handleStart(ctx) {
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
   }
 
-  // Bookkeeping AFTER the user already got their reply (doesn't delay them)
   usersRepo.touchActivity(uid).catch((err) => logger.warn('touchActivity failed:', err.message));
   if (!existingUser && startPayload.startsWith('ref_')) {
     referralsRepo.registerReferral(startPayload.slice(4), uid)
       .catch((err) => logger.warn('registerReferral failed:', err.message));
   }
 
-  // If admin, show admin panel button
   if (admin) {
     const adminKb = new (require('grammy').InlineKeyboard)().text(settings.panel_button_text, 'admin:panel');
     await ctx.reply('👨‍💼 You have admin access.', { reply_markup: adminKb });
   }
 }
 
-// "Next" button from welcome page → show the join page
 async function handleJoinChannels(ctx) {
   const [channels, settings] = await Promise.all([
     forceJoinRepo.listEnabledChannels(),
@@ -74,7 +66,6 @@ async function handleJoinChannels(ctx) {
   ]);
 
   if (channels.length === 0) {
-    // No channels required — go straight to videos
     return handleSeeVideos(ctx);
   }
 
@@ -93,7 +84,6 @@ async function handleJoinChannels(ctx) {
 
 async function handleCheckJoin(ctx) {
   const uid = ctx.from.id;
-  // fresh: always re-check for real when the user taps "Check Join"
   const { allJoined, missing, channels } = await forceJoinService.checkAllChannels(uid, { fresh: true });
 
   if (allJoined) {
@@ -102,7 +92,6 @@ async function handleCheckJoin(ctx) {
     const { InlineKeyboard } = require('grammy');
     const kb = new InlineKeyboard().text(settings.videos_button_text, 'see_videos');
     const requestVerified = channels.some((channel) => channel.requires_approval);
-    // Answer first so the button spinner stops immediately, then update the message
     await ctx.answerCallbackQuery('✅ Verified!');
     await ctx.editMessageText(
       requestVerified
@@ -125,7 +114,6 @@ async function handleCheckJoin(ctx) {
 }
 
 async function handleSeeVideos(ctx) {
-  // Verify force join before allowing access
   const uid = ctx.from.id;
   const { allJoined, channels } = await forceJoinService.checkAllChannels(uid);
 
@@ -136,13 +124,23 @@ async function handleSeeVideos(ctx) {
     });
   }
 
+  // ─── Human verification gate ───
+  const settings = await settingsRepo.getAllSettings();
+  if (settings.human_verify_enabled === 'true') {
+    const user = await usersRepo.getUser(uid);
+    if (!user?.human_verified) {
+      await ctx.answerCallbackQuery();
+      const humanVerify = require('./humanVerification');
+      return humanVerify.startHumanVerification(ctx);
+    }
+  }
+
   referralsRepo.markReferralValid(uid).catch((err) => logger.warn('markReferralValid failed:', err.message));
   usersRepo.touchActivity(uid).catch(() => {});
   await showFolderView(ctx, null);
   await ctx.answerCallbackQuery();
 }
 
-// Show a folder view (list of sub-folders + content). parentId null = root.
 async function showFolderView(ctx, parentId) {
   let breadcrumb = [];
   if (parentId) {

@@ -5,6 +5,7 @@ const { bot } = require('./src/services/telegram');
 const { isSuperAdmin, isAdmin, adminOnly, hasPermission } = require('./src/services/permissions');
 const { PERMISSIONS } = require('./src/config/constants');
 const userHandlers = require('./src/handlers/user/userHandlers');
+const humanVerificationHandler = require('./src/handlers/user/humanVerification');
 const adminRouter = require('./src/handlers/admin');
 const folderHandlers = require('./src/handlers/admin/folderHandlers');
 const contentHandlers = require('./src/handlers/admin/contentHandlers');
@@ -22,10 +23,6 @@ const { startHealthServer } = require('./src/services/health');
 
 // ---- Middleware ----
 
-// SPEED FIX: grammY long polling handles updates strictly one after another, so
-// one slow update (content sending, broadcast, slow DB call) froze the bot for
-// everybody. This runs different users in parallel, while keeping the updates
-// of the SAME user in order (needed for the multi-step admin flows).
 const userQueues = new Map();
 bot.use((ctx, next) => {
   const key = ctx.from?.id ?? ctx.chat?.id ?? 'system';
@@ -49,22 +46,17 @@ bot.use((ctx, next) => {
     if (userQueues.get(key) === tail) userQueues.delete(key);
   });
   run.catch((err) => logger.error('Bot error:', err.message, err.stack));
-  // Intentionally NOT returning the promise: polling continues immediately.
 });
 
-// Only respond in private chats (not groups) unless it's an admin command
 bot.use(async (ctx, next) => {
-  // Allow callback queries (they come from button taps in private chats)
   if (ctx.callbackQuery) return next();
-  // Join requests and member updates originate from the channel and must reach the tracker.
   if (ctx.update?.chat_join_request || ctx.update?.chat_member || ctx.update?.my_chat_member) return next();
   if (ctx.chat?.type && ctx.chat.type !== 'private') {
-    return; // silently ignore group messages
+    return;
   }
   return next();
 });
 
-// Error wrapper
 bot.catch((err) => {
   logger.error('Bot error:', err.message, err.stack);
 });
@@ -85,7 +77,7 @@ bot.command('admin', async (ctx) => {
   if (!await isAdmin(uid)) {
     return ctx.reply('⛔️ You are not an admin.');
   }
-    const perms = await (require('./src/services/permissions')).getEffectivePermissions(uid);
+  const perms = await (require('./src/services/permissions')).getEffectivePermissions(uid);
   const { adminPanelKeyboard } = require('./src/keyboards/keyboards');
   const kb = adminPanelKeyboard(perms);
   const role = isSuperAdmin(uid) ? '👑 Super Admin' : '👨‍💼 Sub-Admin';
@@ -93,7 +85,6 @@ bot.command('admin', async (ctx) => {
 });
 
 bot.command('done', async (ctx) => {
-  // Handled in admin text router for upload flow; if not in flow, ignore
   const s = session.get(ctx.from.id);
   if (s?.flow === 'content_upload' && (isSuperAdmin(ctx.from.id) || await hasPermission(ctx.from.id, PERMISSIONS.UPLOAD_CONTENT))) {
     return contentHandlers.finishUpload(ctx);
@@ -103,6 +94,11 @@ bot.command('done', async (ctx) => {
 bot.command('cancel', async (ctx) => {
   session.clear(ctx.from.id);
   await ctx.reply('✅ Operation cancelled.');
+});
+
+// Cancel an active human verification session
+bot.command('cancel_session', async (ctx) => {
+  await humanVerificationHandler.cancel(ctx);
 });
 
 // ---- User callbacks ----
@@ -119,7 +115,6 @@ bot.callbackQuery('see_videos', async (ctx) => {
   await userHandlers.handleSeeVideos(ctx);
 });
 
-// Folder navigation: open_folder:<id>
 bot.callbackQuery(/^open_folder:(.*)$/, async (ctx) => {
   const folderId = ctx.match?.[1];
   if (folderId === 'null' || !folderId) {
@@ -130,14 +125,17 @@ bot.callbackQuery(/^open_folder:(.*)$/, async (ctx) => {
   await ctx.answerCallbackQuery();
 });
 
-// View content: view_content:<id>
 bot.callbackQuery(/^view_content:(.*)$/, async (ctx) => {
   await userHandlers.handleViewContent(ctx, ctx.match[1]);
 });
 
+// Human verification OTP keypad
+bot.callbackQuery(/^hv_otp\|/, async (ctx) => {
+  await humanVerificationHandler.handleOtpCallback(ctx);
+});
+
 // ---- Admin callbacks ----
 
-// Admin panel entry: admin:panel
 bot.callbackQuery('admin:panel', async (ctx) => {
   const uid = ctx.from.id;
   if (!await isAdmin(uid)) {
@@ -146,7 +144,6 @@ bot.callbackQuery('admin:panel', async (ctx) => {
   await adminRouter.showPanel(ctx);
 });
 
-// All admin: callbacks
 bot.callbackQuery(/^admin:(.+)$/, async (ctx) => {
   const uid = ctx.from.id;
   if (!await isAdmin(uid)) {
@@ -155,7 +152,6 @@ bot.callbackQuery(/^admin:(.+)$/, async (ctx) => {
   await adminRouter.routeAdminCallback(ctx);
 });
 
-// All other admin sub-callbacks (afolder:, acfolder:, etc.)
 bot.callbackQuery(/^(afolder|acfolder|acitem|acupload|acedit_title|acedit_desc|actoggle|acdelete|acaccess|afj|afj_type|awelcome|abc|auser|aadmin|astorage|asettings):(.+)$/, async (ctx) => {
   const uid = ctx.from.id;
   if (!await isAdmin(uid)) {
@@ -164,19 +160,26 @@ bot.callbackQuery(/^(afolder|acfolder|acitem|acupload|acedit_title|acedit_desc|a
   await adminRouter.routeAdminSubCallback(ctx);
 });
 
-// ---- Text message handling (for multi-step flows) ----
+// ---- Text message handling ----
 
 bot.on('message:text', async (ctx, next) => {
-  // Skip commands (handled above). Exception: /skip is used inside admin flows
-  // (clear description/link/username, skip content name) so it must reach them.
+  // Human verification: password input
+  if (await humanVerificationHandler.tryHandlePassword(ctx)) return;
+  // Nudge user if they type during wrong stage (OTP / await_contact)
+  if (await humanVerificationHandler.tryHandleWrongStageText(ctx)) return;
+
   const isSkip = /^\/skip(@\w+)?$/i.test(ctx.message.text.trim());
   if (ctx.message.text.startsWith('/') && !isSkip) return next();
 
-  // Try admin text flows first
   const handled = await adminRouter.routeAdminText(ctx);
   if (handled) return;
 
   return next();
+});
+
+// Contact handler for human verification
+bot.on('message:contact', async (ctx) => {
+  await humanVerificationHandler.handleContact(ctx);
 });
 
 // Media messages during upload flow
@@ -189,23 +192,17 @@ bot.on('message', async (ctx, next) => {
   return next();
 });
 
-// Track join requests for request-based channels (no auto-approval)
+// Track join requests for request-based channels
 bot.on('chat_join_request', async (ctx) => {
   try {
     const { recordJoinRequest } = require('./src/services/forceJoin');
-    // NOTE: the raw update is ctx.update.chat_join_request (ctx.chat_join_request does not exist)
     const req = ctx.update.chat_join_request;
-    const chatId = req.chat.id;
-    const userId = req.from.id;
-    const title = req.chat.title;
-    await recordJoinRequest(chatId, userId, title);
+    await recordJoinRequest(req.chat.id, req.from.id, req.chat.title);
   } catch (err) {
     logger.error('Join request tracking error:', err.message);
   }
 });
 
-// Track approval/leave events for request-based force-join channels. A
-// pending request alone never unlocks the bot; approval must arrive first.
 bot.on('chat_member', async (ctx) => {
   try {
     const update = ctx.update.chat_member;
