@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: setanbot
+    runtime: node
+    plan: starter
+    buildCommand: pnpm install --frozen-lockfile && pnpm --filter @workspace/telegram-bot run typecheck
+    startCommand: pnpm --filter @workspace/telegram-bot run start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPER_ADMIN_ID
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: BOT_USERNAME
+        sync: false
+      - key: STORAGE_CHANNEL_ID
+        sync: false
+      - key: REFERRAL_REQUIREMENT_ENABLED
+        value: "false"
+      - key: REFERRAL_DAILY_REQUIREMENT
+        value: "0"
+      - key: REFERRAL_TIMEZONE
+        value: Asia/Calcutta
+      - key: BROADCAST_INTERVAL_MS
+        value: "35"

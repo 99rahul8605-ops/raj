@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/telegram-bot",
+  "version": "2.0.0",
+  "description": "Production-ready Telegram content distribution bot with referrals and bulk content",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "typecheck": "node --check index.js && find src -name '*.js' -print0 | xargs -0 -n1 node --check",
+    "check:config": "node -e \"require('./src/config/env'); console.log('Configuration shape is valid')\""
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "dotenv": "^16.4.5",
+    "grammy": "^1.30.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
