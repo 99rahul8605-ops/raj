@@ -13,7 +13,8 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.45.4",
     "dotenv": "^16.4.5",
-    "grammy": "^1.30.0"
+    "grammy": "^1.30.0",
+    "telegram": "^2.22.2"
   },
   "engines": {
     "node": ">=22"
