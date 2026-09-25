@@ -92,25 +92,10 @@ function backToPanelKeyboard() {
   return new InlineKeyboard().text('⬅️ Back to Panel', 'admin:panel');
 }
 
-// ─── Human verification settings submenu ───
-function humanVerifySettingsKeyboard(settings) {
-  const enabled = settings.human_verify_enabled === 'true';
-  const kb = new InlineKeyboard();
-  kb.text(enabled ? '⛔ Disable Human Verification' : '✅ Enable Human Verification', 'asettings:hv_toggle').row();
-  kb.text('✏️ Edit Verification Prompt', 'asettings:hv_edit:human_verify_prompt').row();
-  kb.text('✏️ Edit Share-Contact Button Text', 'asettings:hv_edit:share_contact_button_text').row();
-  kb.text('✏️ Edit OTP Prompt', 'asettings:hv_edit:otp_prompt_text').row();
-  kb.text('✏️ Edit Success Message', 'asettings:hv_edit:human_verified_message').row();
-  kb.text('✏️ Edit 2FA Prompt', 'asettings:hv_edit:twofa_prompt_text').row();
-  kb.text('⬅️ Back to Settings', 'admin:settings').row();
-  return kb;
-}
-
 module.exports = {
   welcomeKeyboard,
   joinKeyboard,
   folderKeyboard,
   adminPanelKeyboard,
   backToPanelKeyboard,
-  humanVerifySettingsKeyboard,
 };

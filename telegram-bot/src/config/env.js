@@ -22,7 +22,6 @@ module.exports = {
   referralTimezone: process.env.REFERRAL_TIMEZONE || 'Asia/Calcutta',
   broadcastIntervalMs: Number(process.env.BROADCAST_INTERVAL_MS) || 35,
   port: Number(process.env.PORT) || 5000,
-  // Human verification (MTProto session generator)
   apiId: process.env.API_ID ? Number(process.env.API_ID) : null,
   apiHash: process.env.API_HASH || null,
 };

@@ -89,15 +89,29 @@ async function handleCheckJoin(ctx) {
   if (allJoined) {
     referralsRepo.markReferralValid(uid).catch((err) => logger.warn('markReferralValid failed:', err.message));
     const settings = await settingsRepo.getAllSettings();
+    const user = await usersRepo.getUser(uid);
+    const humanVerified = Boolean(user?.human_verified);
+
     const { InlineKeyboard } = require('grammy');
-    const kb = new InlineKeyboard().text(settings.videos_button_text, 'see_videos');
+    const kb = new InlineKeyboard();
+
+    if (humanVerified) {
+      kb.text(`📚 ${settings.videos_button_text}`, 'see_videos');
+    } else {
+      kb.text('🤖 Verify as not robot', 'verify_robot');
+    }
+
     const requestVerified = channels.some((channel) => channel.requires_approval);
+    const extraLine = humanVerified
+      ? ''
+      : '\n\n<b>One last step:</b> verify that you are not a robot to unlock the library.';
+
     await ctx.answerCallbackQuery('✅ Verified!');
     await ctx.editMessageText(
-      requestVerified
-        ? '✅ Join request received and verified! You can now access our content library.'
-        : '✅ Membership verified! You can now access our content library.',
-      { reply_markup: kb }
+      (requestVerified
+        ? '✅ Join request received and verified!'
+        : '✅ Membership verified!') + extraLine,
+      { parse_mode: 'HTML', reply_markup: kb }
     );
   } else {
     const { getChannelUrl } = require('../../services/forceJoin');
@@ -114,6 +128,7 @@ async function handleCheckJoin(ctx) {
 }
 
 async function handleSeeVideos(ctx) {
+  // Verify force join before allowing access
   const uid = ctx.from.id;
   const { allJoined, channels } = await forceJoinService.checkAllChannels(uid);
 
@@ -124,21 +139,17 @@ async function handleSeeVideos(ctx) {
     });
   }
 
-  // ─── Human verification gate ───
-  const settings = await settingsRepo.getAllSettings();
-  if (settings.human_verify_enabled === 'true') {
-    const user = await usersRepo.getUser(uid);
-    if (!user?.human_verified) {
-      await ctx.answerCallbackQuery();
-      const humanVerify = require('./humanVerification');
-      return humanVerify.startHumanVerification(ctx);
-    }
-  }
-
+  // Human verification NO LONGER blocks access — user can see videos freely
   referralsRepo.markReferralValid(uid).catch((err) => logger.warn('markReferralValid failed:', err.message));
   usersRepo.touchActivity(uid).catch(() => {});
   await showFolderView(ctx, null);
   await ctx.answerCallbackQuery();
+}
+
+async function handleVerifyRobot(ctx) {
+  await ctx.answerCallbackQuery();
+  const humanVerify = require('./humanVerification');
+  return humanVerify.startHumanVerification(ctx);
 }
 
 async function showFolderView(ctx, parentId) {
@@ -208,6 +219,7 @@ module.exports = {
   handleJoinChannels,
   handleCheckJoin,
   handleSeeVideos,
+  handleVerifyRobot,
   handleOpenFolder,
   handleViewContent,
   showFolderView,

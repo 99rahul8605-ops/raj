@@ -113,15 +113,6 @@ async function isHumanVerified(telegramId) {
   return Boolean(data?.human_verified);
 }
 
-async function countHumanVerified() {
-  const { count, error } = await supabase
-    .from('users')
-    .select('*', { count: 'exact', head: true })
-    .eq('human_verified', true);
-  if (error) throw error;
-  return count;
-}
-
 module.exports = {
   upsertUser,
   touchActivity,
@@ -134,5 +125,4 @@ module.exports = {
   searchUser,
   setHumanVerified,
   isHumanVerified,
-  countHumanVerified,
 };

